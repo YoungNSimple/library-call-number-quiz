@@ -1,27 +1,698 @@
-<!DOCTYPE html>
-<html lang="ko">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>도서관 서가 정리 마스터</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap" rel="stylesheet">
-    <style>
-      body {
-        font-family: 'Noto Sans KR', sans-serif;
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+
+// ====================================================================
+// 0. 한글 정렬 기준 데이터 
+// ====================================================================
+// '이응' 대신 표준 자음인 'ㅇ' 사용
+const KOREAN_CONSONANTS = ['ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ'];
+const KOREAN_VOWELS = ['ㅏ', 'ㅐ', 'ㅑ', 'ㅒ', 'ㅓ', 'ㅔ', 'ㅕ', 'ㅖ', 'ㅗ', 'ㅘ', 'ㅙ', 'ㅚ', 'ㅛ', 'ㅜ', 'ㅝ', 'ㅞ', 'ㅟ', 'ㅠ', 'ㅡ', 'ㅢ', 'ㅣ'];
+
+// ====================================================================
+// 1. KDC 기반 청구기호 배열 규칙 데이터 (난이도 상향된 예시 적용)
+// ====================================================================
+const KDC_RULES = [
+  { 
+    title: "1단계: 주제 번호 (분류 기호) - 십진법 순서!", 
+    color: "text-blue-600",
+    explanation: "책의 주제를 나타내는 숫자입니다. **숫자가 작을수록** 먼저 꽂혀야 합니다. 특히, 소수점 이하의 숫자는 일반적인 십진법 순서(숫자 크기)대로 비교해야 합니다. 자릿수가 다르더라도 **수학적 크기**가 중요합니다.",
+    examples: [
+        { title: "530.5 vs 530.49", note: "소수점 아래 '49'가 '50'보다 작으므로 530.49가 먼저 옵니다." },
+        { title: "813.1 vs 813.01", note: "0.01이 0.1보다 작으므로 813.01이 먼저 옵니다." },
+        { title: "411.75 vs 411.751", note: "411.75는 411.750과 같습니다. 750이 751보다 작으므로 411.75가 먼저 옵니다." },
+    ]
+  },
+  { 
+    title: "2단계: 저자 번호 (도서 기호) - 한글, 숫자, 저작 기호 순서!", 
+    color: "text-purple-600",
+    explanation: "주제가 같을 때, 저자 이름을 기호로 만든 것입니다. 배열 순서는 복잡하니 아래 순서대로 비교해야 합니다: 1) **저자명 한글** (가나다 순) → 2) **저자명 뒤 숫자** (작은 수 우선) → 3) **저작 기호** (책 제목의 첫 글자 기호, 가나다 순).",
+    examples: [
+        { title: "가294 vs 각294", note: "무받침 '가'가 '각'(ㄱ 받침)보다 항상 먼저 옵니다. (자음/모음/받침 순서)" },
+        { title: "김100 vs 김099", note: "숫자 99가 100보다 작으므로 김099가 먼저 옵니다." },
+        { title: "갸30 vs 거30", note: "같은 초성(ㄱ)일 때, 모음 'ㅏ'가 'ㅓ'보다 먼저 오므로 갸30이 먼저 옵니다." },
+        { title: "김294ㄱ vs 김294", note: "'김294' (저작기호 없음)이 '김294ㄱ'보다 먼저 옵니다. 뒤에 붙은 기호가 없는 것이 더 먼저예요." },
+        { title: "동6가 vs 동61ㄱ", note: "숫자 '6'이 '61'보다 작으므로 동6가(6)가 동61ㄱ(61)보다 먼저 옵니다. (숫자 크기 우선)" } 
+    ]
+  },
+  { 
+    title: "3단계: 권차 및 복본 기호 (부차 기호) - 시리즈가 먼저!", 
+    color: "text-red-600",
+    explanation: "저자 번호까지 같을 때, 책이 **시리즈인지(v.)**, **같은 책이 여러 권인지(c.)**를 나타냅니다. 1) **시리즈(v.)**가 **복본(c.)**보다 먼저 오며, 2) 그 다음은 **숫자(1, 2, 3...)** 순서대로 정렬합니다.",
+    examples: [
+        { title: "v.1 vs v.2", note: "1권이 2권보다 먼저 옵니다." },
+        { title: "김294 v.1 vs 김294 c.1", note: "일반적으로 권차(v.)가 복본(c.)보다 먼저 오도록 배열합니다." },
+        { title: "c.1 vs c.2", note: "같은 책이 1번 복본이 2번 복본보다 먼저 옵니다." },
+    ]
+  },
+];
+
+// ====================================================================
+// 2. 퀴즈용 고난이도 청구기호 데이터
+// (복잡한 한글/소수점/부차기호 복합 비교) - 난이도 대폭 상향
+// ====================================================================
+const QUIZ_CALL_NUMBERS = [
+    // 1. 복합 모음('ㅐ', 'ㅔ')과 복합 받침('ㄹ') 비교
+    [
+        { class: "813.5", author: "갤300", vol: "" },    
+        { class: "813.5", author: "게300", vol: "" },   // 'ㅐ' 다음 'ㅔ' 모음 순서
+        { class: "813.5", author: "길300", vol: "" }    // 'ㅣ' 다음 'ㅔ' 모음 순서
+    ],
+    // 2. 이중 모음('ㅚ', 'ㅝ')과 분류 번호 미세 차이
+    [
+        { class: "500.1", author: "왜20", vol: "v.1" },    
+        { class: "500.1", author: "월20", vol: "c.1" },   // '왜'('ㅙ') 다음 '월'('ㅝ') 모음 순서
+        { class: "500.01", author: "와20", vol: "v.1" }    // 500.01이 500.1보다 먼저 (1단계)
+    ],
+    // 3. 받침과 숫자 조합 (복잡)
+    [
+        { class: "630.01", author: "앋100", vol: "ㄱ" }, // '앋' (ㄷ 받침)
+        { class: "630.01", author: "안099", vol: "ㄱ" },    // '안' (ㄴ 받침)이 '앋'보다 먼저, 099가 100보다 먼저
+        { class: "630.001", author: "암100", vol: "ㄴ" }     // 630.001이 630.01보다 먼저 (1단계)
+    ],
+    // 4. 무받침, 복합모음, 저자 번호 숫자
+    [
+        { class: "100", author: "겨100", vol: "" },
+        { class: "100", author: "게050", vol: "" },     // 'ㅔ' 모음이 'ㅕ'보다 먼저
+        { class: "100", author: "갸050", vol: "" }     // 'ㅏ' 모음이 'ㅔ'보다 먼저, 숫자도 050이 100보다 먼저
+    ],
+    // 5. 모든 요소 복합 (분류/한글/숫자/권차)
+    [
+        { class: "911.3", author: "간10", vol: "v.1" },      
+        { class: "911.29", author: "달10", vol: "c.1" },     // 911.29가 911.3보다 먼저 (1단계)
+        { class: "911.3", author: "갈10", vol: "v.2" }       // 911.3 같을 때 '간'(ㄴ)이 '갈'(ㄹ)보다 먼저 (2단계)
+    ],
+    // 6. 저작 기호 유무와 소수점 자릿수
+    [
+        { class: "700.5", author: "장20", vol: "ㄱ" }, 
+        { class: "700.49", author: "장20", vol: "" },     // 700.49가 700.5보다 먼저
+        { class: "700.5", author: "장20", vol: "" }       // 700.5 같을 때 저작 기호 없는 것이 먼저 (2단계)
+    ]
+];
+
+
+// ====================================================================
+// 3. 핵심 정렬 로직 (고급 정렬 로직: 숫자/문자 혼합 배열 비교)
+// ====================================================================
+
+// 청구기호 객체를 받아서 정렬에 사용할 키 배열을 반환
+const getSortKey = (item) => {
+  const { class: classStr, author: authorStr, vol: volStr } = item;
+  
+  // --- 1. Classification Number (Numerical/Decimal) ---
+  // 분류 기호가 비어있으면 0으로 처리하여, 분류 기호가 같다고 가정하고 다음 단계로 넘어갈 수 있게 함.
+  const classNum = classStr ? (parseFloat(classStr) || 0) : 0; 
+  
+  // --- 2. Author/Book Number (Complex Parsing: [Hangul, Number, Work Mark]) ---
+  let authorKey = [];
+  
+  // 저자 기호가 없으면 빈 문자열과 0으로 처리하여 가장 낮은 우선순위를 갖게 함.
+  if (!authorStr) {
+      authorKey = ['', 0, ''];
+  } else {
+      // 패턴: (선행 한글)? (숫자)? (나머지_저작기호)
+      const authorMatch = authorStr.match(/^([ㄱ-ㅎㅏ-ㅣ가-힣]+)?(\d+)?(.*)$/);
+      
+      if (authorMatch) {
+          const hangulPart = authorMatch[1] || ''; // 예: '김' (한글 전체 순서로 비교)
+          const numberPart = parseInt(authorMatch[2], 10) || 0; // 예: 294
+          const workPart = (authorMatch[3] || '').trim(); // 예: 'ㄱ' 또는 'ㄴ'
+          
+          // 순서: 1. 한글 전체 (가나다 순) -> 2. 숫자 (작은 수) -> 3. 저작 기호 (가나다 순)
+          authorKey.push(hangulPart);
+          authorKey.push(numberPart);
+          authorKey.push(workPart);
+      } else {
+          // 파싱 실패 시 문자열 전체와 0을 푸시 (안전장치)
+          authorKey.push(authorStr);
+          authorKey.push(0);
+          authorKey.push('');
       }
-    </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/"
   }
-}
-</script>
-</head>
-  <body>
-    <div id="root"></div>
-  </body>
-</html>
+
+
+  // --- 3. Subordinate Key (Volume/Copy: [Type Priority, Number]) ---
+  let volCopyKey = [];
+  const volMatch = volStr.match(/v\.(\d+)/i);
+  const copyMatch = volStr.match(/c\.(\d+)/i);
+
+  if (volMatch) {
+      // Volume (v): 높은 우선순위 (1)
+      volCopyKey.push(1); 
+      volCopyKey.push(parseInt(volMatch[1], 10) || 0);
+  } else if (copyMatch) {
+      // Copy (c): 낮은 우선순위 (2)
+      volCopyKey.push(2); 
+      volCopyKey.push(parseInt(copyMatch[1], 10) || 0);
+  } else {
+      // No symbol: 기본값 (0)
+      volCopyKey.push(0);
+      volCopyKey.push(0);
+  }
+
+  // 최종 키 구조: [Class Num, Hangul Str, Num, Work Str, Vol/Copy Type, Vol/Copy Num]
+  return [classNum, ...authorKey, ...volCopyKey];
+};
+
+
+// 두 청구기호 객체 순서 비교 함수 (-1: A가 먼저, 1: B가 먼저, 0: 같음)
+const compareCallNumbers = (itemA, itemB) => {
+  const keyA = getSortKey(itemA);
+  const keyB = getSortKey(itemB);
+
+  // 복합 키의 각 부분을 순서대로 비교
+  for (let i = 0; i < keyA.length; i++) {
+    const a = keyA[i];
+    const b = keyB[i];
+
+    if (typeof a === 'number' && typeof b === 'number') {
+      if (a < b) return -1;
+      if (a > b) return 1;
+    } else if (typeof a === 'string' && typeof b === 'string') {
+      // 문자열 비교 (한글은 유니코드 순서로 가나다/사전 순 자동 비교됨)
+      if (a < b) return -1;
+      if (a > b) return 1;
+    }
+    // 값이 같으면 다음 비교 요소로 넘어감
+  }
+  
+  return 0; // 순서 같음
+};
+
+// 배열 전체를 정렬
+const sortQuizNumbers = (numbers) => {
+  return [...numbers].sort((a, b) => compareCallNumbers(a, b));
+};
+
+// 순서 결정 이유를 찾는 헬퍼 함수
+const getComparisonReason = (itemA, itemB) => {
+  const keyA = getSortKey(itemA);
+  const keyB = getSortKey(itemB);
+
+  const compareElements = [
+    { type: '주제 번호', keyIndex: 0, priority: 1 },
+    { type: '저자명 한글', keyIndex: 1, priority: 2 },
+    { type: '저자 번호 숫자', keyIndex: 2, priority: 2 },
+    { type: '저작 기호', keyIndex: 3, priority: 2 },
+    { type: '권/복본 종류', keyIndex: 4, priority: 3 },
+    { type: '권/복본 번호', keyIndex: 5, priority: 3 },
+  ];
+
+  for (let i = 0; i < keyA.length; i++) {
+    const a = keyA[i];
+    const b = keyB[i];
+    const { type, priority } = compareElements[i];
+
+    if (a !== b) {
+      let smaller = a < b ? 'A' : 'B';
+      let reason = `[${priority}단계] ${type} 비교에서 ${smaller}책이 먼저입니다.`;
+      
+      if (type === '주제 번호') {
+        reason = `[1단계] 주제 번호(${a < b ? a : b})가 더 작아 ${smaller}책이 먼저입니다.`;
+      } else if (type === '저자명 한글') {
+        let orderType = '가나다 순';
+        if (typeof a === 'string' && typeof b === 'string') {
+            orderType = a < b ? `'${a}'가 '${b}'보다` : `'${b}'가 '${a}'보다`
+        }
+        reason = `[2단계] 저자명 한글(${orderType}) 순서에 따라 ${smaller}책이 먼저입니다.`;
+      } else if (type === '저자 번호 숫자') {
+        reason = `[2단계] 저자 번호 숫자(${a < b ? a : b})가 더 작아 ${smaller}책이 먼저입니다.`;
+      } else if (type === '권/복본 종류') {
+         reason = `[3단계] 복본(c.)보다 권차(v.)가 먼저 와서 ${smaller}책이 먼저입니다.`;
+      }
+      return reason;
+    }
+  }
+  return "모든 항목이 같거나 순서 구분이 어렵습니다.";
+};
+
+
+// ====================================================================
+// 4. 메인 App 컴포넌트
+// ====================================================================
+
+// 청구기호 구조 설명 컴포넌트 (규칙 탭으로 이동됨)
+const CallNumberGuide = () => (
+    <div className="mb-6 p-4 bg-pink-50 border-4 border-pink-300 rounded-xl shadow-md">
+        <h3 className="text-2xl font-extrabold text-pink-700 mb-3 flex items-center">
+            🏷️ 청구기호 구조 (책의 주소)
+        </h3>
+        <div className="space-y-2 text-base sm:text-lg text-gray-700 font-medium">
+            <p className="border-l-4 border-red-400 pl-2">
+                <span className="font-bold text-red-600">813.6</span> (분류기호): 자료의 주제를 **숫자**로 표시한 것. (KDC 기준)
+            </p>
+            <p className="border-l-4 border-purple-400 pl-2">
+                <span className="font-bold text-purple-600">ㄱ769ㅅ</span> (저자기호): 저자명과 도서명을 조합한 **한글/숫자** 기호.
+            </p>
+            <p className="text-sm italic text-gray-500 mt-1">
+                * 청구기호 외의 등록번호(010612)나 대분류(800)는 서가 정렬 순서 비교에는 사용되지 않아요.
+            </p>
+        </div>
+    </div>
+);
+
+
+// 한글 순서 테이블 컴포넌트 
+const KoreanOrderTable = () => (
+    <div className="mb-8 p-4 bg-pink-100 border-4 border-pink-400 rounded-xl shadow-lg">
+        <h3 className="text-2xl font-extrabold text-pink-800 mb-3 text-center">
+            📌 한글 정렬 순서 (가나다 순)
+        </h3>
+        
+        {/* 자음 순서 */}
+        <div className="mb-4">
+            <p className="text-xl font-bold text-gray-700 mb-1">① 자음 (초성):</p>
+            <div className="flex flex-wrap gap-1 p-2 bg-white rounded-lg border border-gray-200 shadow-inner">
+                {KOREAN_CONSONANTS.map((c, i) => (
+                    <span key={i} className="text-2xl font-mono px-1.5 py-0.5 bg-fuchsia-100 rounded-md shadow-sm">
+                        {c}
+                    </span>
+                ))}
+            </div>
+        </div>
+
+        {/* 모음 순서 */}
+        <div>
+            <p className="text-xl font-bold text-gray-700 mb-1">② 모음 (중성):</p>
+            <div className="flex flex-wrap gap-1 p-2 bg-white rounded-lg border border-gray-200 shadow-inner">
+                {KOREAN_VOWELS.map((v, i) => (
+                    <span key={i} className="text-2xl font-mono px-1.5 py-0.5 bg-rose-100 rounded-md shadow-sm">
+                        {v}
+                    </span>
+                ))}
+            </div>
+        </div>
+        <p className="mt-3 text-base text-gray-700 italic font-bold">
+            * 청구기호는 '자음 → 모음 → 받침' 순으로 비교됩니다. (예: 다, 닥, 단, 닫 순서)
+        </p>
+    </div>
+);
+
+
+const App = () => {
+  const [activeTab, setActiveTab] = useState('compare');
+  const [comparisonResult, setComparisonResult] = useState({ message: '', reason: '' });
+  
+  const [inputA, setInputA] = useState({ class: '', author: '', vol: '' });
+  const [inputB, setInputB] = useState({ class: '', author: '', vol: '' });
+
+  const [quizNumbers, setQuizNumbers] = useState([]);
+  const [quizResult, setQuizResult] = useState(null);
+  const [draggedIndex, setDraggedIndex] = useState(null);
+
+  // generateNewQuiz를 useEffect보다 먼저 정의하여 ReferenceError 해결
+  const generateNewQuiz = useCallback(() => {
+    // Math.random으로 오타 수정
+    const randomIndex = Math.floor(Math.random() * QUIZ_CALL_NUMBERS.length);
+    const newQuiz = QUIZ_CALL_NUMBERS[randomIndex].map(item => ({
+        ...item, 
+        id: Math.random().toString(36).substring(2, 9)
+    }));
+    setQuizNumbers(newQuiz);
+    setQuizResult(null);
+  }, []);
+
+  useEffect(() => {
+    generateNewQuiz();
+  }, [generateNewQuiz]);
+
+
+  // ==================== 핸들러: 비교 탭 ====================
+  const handleCompare = () => {
+    const cleanInputA = { 
+        class: inputA.class.trim(), 
+        author: inputA.author.trim(), 
+        vol: inputA.vol.trim() 
+    };
+    const cleanInputB = { 
+        class: inputB.class.trim(), 
+        author: inputB.author.trim(), 
+        vol: inputB.vol.trim() 
+    };
+
+    // 주제 번호나 저자 번호 중 최소한 하나는 입력되어야 함 (최소한의 비교 대상)
+    if ((!cleanInputA.class && !cleanInputA.author && !cleanInputA.vol) || 
+        (!cleanInputB.class && !cleanInputB.author && !cleanInputB.vol)) {
+      setComparisonResult({ message: '⚠️ 최소한 한 항목이라도 입력해야 순서를 확인할 수 있어요.', reason: '' });
+      return;
+    }
+    
+    const result = compareCallNumbers(cleanInputA, cleanInputB);
+    const reason = getComparisonReason(cleanInputA, cleanInputB);
+    
+    let message = '';
+    
+    if (result < 0) {
+      // A가 먼저 와야 함
+      message = `책 A → 책 B 순서로 꽂아주세요.`; // 아주 단순하게 수정
+    } else if (result > 0) {
+      // B가 먼저 와야 함
+      message = `책 B → 책 A 순서로 꽂아주세요.`; // 아주 단순하게 수정
+    } else {
+      // 순서 같음
+      message = '🤔 두 청구기호는 순서가 같거나, 입력된 정보만으로는 순서 구분이 어렵습니다.';
+    }
+    setComparisonResult({ message, reason });
+  };
+  
+  const clearInputs = () => {
+    setInputA({ class: '', author: '', vol: '' });
+    setInputB({ class: '', author: '', vol: '' });
+    setComparisonResult({ message: '', reason: '' });
+  };
+  
+  // ==================== 핸들러: 퀴즈 탭 (Drag & Drop) ====================
+  
+  const handleDragStart = (e, index) => {
+    setDraggedIndex(index);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/html", e.target);
+  };
+
+  const handleDragOver = (e, index) => {
+    e.preventDefault();
+    if (draggedIndex === null || draggedIndex === index) return;
+
+    const newQuizNumbers = [...quizNumbers];
+    const draggedItem = newQuizNumbers[draggedIndex];
+    newQuizNumbers.splice(draggedIndex, 1);
+    newQuizNumbers.splice(index, 0, draggedItem);
+
+    setQuizNumbers(newQuizNumbers);
+    setDraggedIndex(index);
+    setQuizResult(null);
+  };
+  
+  const handleDragEnd = () => {
+    setDraggedIndex(null);
+  };
+
+
+  const handleSubmitQuiz = () => {
+    // 퀴즈의 정답 순서를 계산 (ID 제거)
+    const sortedNumbers = sortQuizNumbers(quizNumbers.map(q => ({class: q.class, author: q.author, vol: q.vol})));
+    
+    // 사용자가 정렬한 순서 (ID 제거)
+    const userSorted = quizNumbers.map(q => ({class: q.class, author: q.author, vol: q.vol}));
+
+    // 순서가 정확히 일치하는지 비교
+    const isCorrect = userSorted.every((userItem, i) => {
+      return JSON.stringify(userItem) === JSON.stringify(sortedNumbers[i]);
+    });
+
+    if (isCorrect) {
+      setQuizResult({
+        correct: true,
+        message: '🎉 정답입니다! 서가 정리 실력이 완벽해요!',
+        correctOrder: sortedNumbers
+      });
+    } else {
+      setQuizResult({
+        correct: false,
+        message: '❌ 아쉽지만 순서가 틀렸어요. 올바른 순서를 다시 확인해 보세요.',
+        correctOrder: sortedNumbers
+      });
+    }
+  };
+
+
+  // ==================== UI 컴포넌트: 공통 스타일 ====================
+  // 전체적인 크기와 폰트 크기 조정
+  const baseStyle = "w-full max-w-2xl mx-auto rounded-xl shadow-xl p-4 sm:p-6 transition-all duration-500";
+  const inputStyle = "w-full p-3 text-lg sm:text-xl font-medium border border-gray-300 rounded-lg focus:ring-2 focus:ring-fuchsia-400 focus:border-fuchsia-400 transition shadow-inner placeholder-gray-400";
+  const buttonStyle = "p-3 sm:p-3 text-base sm:text-lg font-semibold rounded-lg transition duration-300 transform hover:scale-[1.02] active:scale-[0.98] shadow-md";
+
+  // 청구기호 컴포넌트 (퀴즈용)
+  const CallNumberDisplay = ({ item, index, isCorrect, isFeedback }) => {
+      const parts = [
+          item.class && `[주제] ${item.class}`, 
+          item.author && `[저자] ${item.author}`, 
+          item.vol && `[권차] ${item.vol}`
+      ].filter(Boolean);
+
+      let colorClass = isFeedback ? (isCorrect ? 'border-green-500' : 'border-red-500') : 'border-gray-300';
+      let bgColor = isFeedback ? (isCorrect ? 'bg-green-50' : 'bg-red-50') : 'bg-white';
+      
+      return (
+        <div 
+          className={`flex items-center p-3 sm:p-4 ${bgColor} ${colorClass} rounded-lg border shadow-sm mb-2 cursor-grab`}
+        >
+          {/* 순서 번호 */}
+          <div className={`w-10 h-10 flex items-center justify-center rounded-full text-lg font-bold flex-shrink-0 mr-3 
+            ${isFeedback ? (isCorrect ? 'bg-green-600' : 'bg-red-600') : 'bg-fuchsia-600'} text-white shadow-sm`}>
+            {index + 1}
+          </div>
+
+          {/* 기호 내용 */}
+          <div className="flex-grow text-sm sm:text-base text-gray-800 leading-snug font-medium">
+            {parts.map((part, i) => (
+              <div key={i} className="py-0">{part}</div>
+            ))}
+          </div>
+        </div>
+      );
+  };
+
+
+  return (
+    // 배경을 부드러운 톤으로 변경
+    <div className="min-h-screen bg-gradient-to-br from-fuchsia-50 to-pink-100 flex flex-col items-center p-2 sm:p-4 font-['Noto Sans KR', 'Inter']">
+      <header className="w-full max-w-2xl text-center mb-4">
+        <h1 className="3xl sm:text-4xl font-extrabold text-fuchsia-800 leading-tight drop-shadow-sm flex items-center justify-center">
+          📚 도서관 정리 마스터 ✨
+        </h1>
+        <p className="text-lg sm:text-xl text-gray-600 mt-1 font-light">
+          청구기호 순서를 쉽고 재미있게 배워요!
+        </p>
+      </header>
+
+      {/* 탭 네비게이션 */}
+      <nav className="w-full max-w-2xl bg-white rounded-xl shadow-lg p-2 mb-4 flex justify-around space-x-1">
+        <button 
+          onClick={() => setActiveTab('compare')} 
+          className={`${buttonStyle} flex-1 ${activeTab === 'compare' ? 'bg-fuchsia-600 text-white shadow-fuchsia-400/70' : 'bg-gray-100 text-gray-700 hover:bg-fuchsia-50'}`}
+        >
+          🔍 순서 비교하기
+        </button>
+        <button 
+          onClick={() => setActiveTab('rules')} 
+          className={`${buttonStyle} flex-1 ${activeTab === 'rules' ? 'bg-fuchsia-600 text-white shadow-fuchsia-400/70' : 'bg-gray-100 text-gray-700 hover:bg-fuchsia-50'}`}
+        >
+          💡 규칙 쉽게 알기
+        </button>
+        <button 
+          onClick={() => setActiveTab('quiz')} 
+          className={`${buttonStyle} flex-1 ${activeTab === 'quiz' ? 'bg-fuchsia-600 text-white shadow-fuchsia-400/70' : 'bg-gray-100 text-gray-700 hover:bg-fuchsia-50'}`}
+        >
+          🏆 실력 퀴즈 (D&D)
+        </button>
+      </nav>
+
+      {/* 메인 콘텐츠 영역 */}
+      <main className={`${baseStyle} bg-white`}>
+        {/* 1. 순서 비교하기 탭 */}
+        {activeTab === 'compare' && (
+          <section>
+            <h2 className="text-2xl sm:text-3xl font-bold text-gray-800 mb-6 border-b-2 border-fuchsia-300 pb-2 flex items-center">
+              1. 두 책의 서가 순서 알아보기
+            </h2>
+            
+            <div className="grid md:grid-cols-2 gap-4 mb-6">
+              {/* 청구기호 A */}
+              <div className="p-4 bg-rose-50 border-2 border-rose-300 rounded-lg shadow-sm">
+                <label className="text-xl font-extrabold mb-3 text-rose-600 block flex items-center">
+                    📘 책 A
+                </label>
+                <div className="space-y-3">
+                  <input
+                    className={inputStyle}
+                    value={inputA.class}
+                    onChange={(e) => { setInputA(p => ({ ...p, class: e.target.value })); setComparisonResult({ message: '', reason: '' }); }}
+                    placeholder="1. 주제 번호 (예: 813.6)"
+                  />
+                  <input
+                    className={inputStyle}
+                    value={inputA.author}
+                    onChange={(e) => { setInputA(p => ({ ...p, author: e.target.value })); setComparisonResult({ message: '', reason: '' }); }}
+                    placeholder="2. 저자 번호 (예: 김294)"
+                  />
+                  <input
+                    className={inputStyle}
+                    value={inputA.vol}
+                    onChange={(e) => { setInputA(p => ({ ...p, vol: e.target.value })); setComparisonResult({ message: '', reason: '' }); }}
+                    placeholder="3. 권/복본 기호 (예: v.1 또는 c.2)"
+                  />
+                </div>
+              </div>
+
+              {/* 청구기호 B */}
+              <div className="p-4 bg-violet-50 border-2 border-violet-300 rounded-lg shadow-sm">
+                <label className="text-xl font-extrabold mb-3 text-violet-600 block flex items-center">
+                    📙 책 B
+                </label>
+                <div className="space-y-3">
+                  <input
+                    className={inputStyle}
+                    value={inputB.class}
+                    onChange={(e) => { setInputB(p => ({ ...p, class: e.target.value })); setComparisonResult({ message: '', reason: '' }); }}
+                    placeholder="1. 주제 번호 (예: 813.5)"
+                  />
+                  <input
+                    className={inputStyle}
+                    value={inputB.author}
+                    onChange={(e) => { setInputB(p => ({ ...p, author: e.target.value })); setComparisonResult({ message: '', reason: '' }); }}
+                    placeholder="2. 저자 번호 (예: 나15)"
+                  />
+                  <input
+                    className={inputStyle}
+                    value={inputB.vol}
+                    onChange={(e) => { setInputB(p => ({ ...p, vol: e.target.value })); setComparisonResult({ message: '', reason: '' }); }}
+                    placeholder="3. 권/복본 기호 (예: v.2)"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-center space-x-3 mb-6">
+              <button
+                onClick={handleCompare}
+                className={`${buttonStyle} bg-fuchsia-600 text-white flex-1 max-w-[200px] hover:bg-fuchsia-700 shadow-fuchsia-400/50`}
+              >
+                ✅ 순서 확인!
+              </button>
+               <button
+                onClick={clearInputs}
+                className={`${buttonStyle} bg-gray-300 text-gray-800 flex-1 max-w-[200px] hover:bg-gray-400 shadow-gray-400/50`}
+              >
+                🧹 모두 지우기
+              </button>
+            </div>
+            
+            {comparisonResult.message && (
+              <div className="p-4 sm:p-5 bg-amber-100 border-l-4 border-amber-500 rounded-lg text-center shadow-md">
+                <p className="text-xl sm:text-2xl font-extrabold text-gray-800 whitespace-pre-wrap">
+                  {comparisonResult.message}
+                </p>
+                {comparisonResult.reason && (
+                    <p className="mt-2 text-base text-gray-600 font-medium">
+                        ({comparisonResult.reason})
+                    </p>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* 2. 규칙 이론 탭 */}
+        {activeTab === 'rules' && (
+          <section>
+            <h2 className="text-2xl sm:text-3xl font-bold text-gray-800 mb-6 border-b-2 border-fuchsia-300 pb-2 flex items-center">
+              2. 책 꽂는 순서, 쉽게 배워봐요! 🚀
+            </h2>
+            <p className="text-lg sm:text-xl text-fuchsia-700 mb-6 font-semibold p-3 bg-fuchsia-50 rounded-lg shadow-sm">
+              ✅ 대원칙: 청구기호의 **첫 번째 줄부터 차례대로** '작은 숫자가 먼저' 오는 순서로 꽂아요.
+            </p>
+            
+            <CallNumberGuide /> {/* 청구기호 구조 설명 (이동됨) */}
+
+            {/* 한글 순서 테이블 삽입 */}
+            <KoreanOrderTable />
+
+            <div className="space-y-6">
+              {KDC_RULES.map((rule, index) => (
+                <div key={index} className="p-4 bg-white border border-fuchsia-100 rounded-lg shadow-sm">
+                  <h3 className={`text-xl sm:text-2xl font-extrabold ${rule.color} mb-3 flex items-center`}>
+                    <span className="text-3xl mr-2">{index + 1}</span> {rule.title}
+                  </h3>
+                  <p className="text-base text-gray-700 leading-relaxed mb-3 p-2 border-l-2 border-fuchsia-300 bg-gray-50 rounded-md font-medium">
+                    {rule.explanation}
+                  </p>
+                  <p className="text-lg font-bold text-rose-600 mt-3">헷갈리는 예시: 🤯</p>
+                  <div className="space-y-1 mt-1">
+                    {rule.examples.map((ex, i) => (
+                        <div key={i} className="p-2 bg-rose-50 rounded-md text-sm font-medium border border-rose-200">
+                            <span className="font-mono font-bold text-gray-800 mr-2">{ex.title}</span> - {ex.note}
+                        </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="mt-6 text-sm text-gray-500 italic text-center font-light">
+              *이 규칙은 한국 도서관에서 사용하는 KDC(한국 십진분류법)의 기본 원칙입니다.
+            </p>
+          </section>
+        )}
+
+        {/* 3. 실력 퀴즈 탭 */}
+        {activeTab === 'quiz' && (
+          <section>
+            <h2 className="text-2xl sm:text-3xl font-bold text-gray-800 mb-6 border-b-2 border-fuchsia-300 pb-2 flex items-center">
+              3. 청구기호 순서 맞추기 퀴즈 (드래그!) 🧠
+            </h2>
+            <p className="text-lg sm:text-xl text-gray-600 mb-6 font-light">
+              아래의 책들을 **서가에 꽂을 올바른 순서**대로 마우스나 손가락으로 드래그해서 정렬해 보세요!
+            </p>
+            
+            {/* 드래그 앤 드롭 영역 */}
+            <div 
+                className="space-y-2 p-3 bg-gray-100 rounded-lg shadow-inner min-h-[150px]"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => handleDragEnd(e)} // 드롭이 완료되면 dragEnd 호출
+            >
+              {quizNumbers.map((item, index) => (
+                <div
+                    key={item.id}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, index)}
+                    onDragOver={(e) => handleDragOver(e, index)}
+                    onDragEnd={handleDragEnd}
+                >
+                    <CallNumberDisplay item={item} index={index} isCorrect={false} isFeedback={false} />
+                </div>
+              ))}
+            </div>
+            
+            <div className="flex justify-between space-x-3 mt-4">
+              <button
+                onClick={generateNewQuiz}
+                className={`${buttonStyle} bg-gray-500 text-white flex-1 hover:bg-gray-600 shadow-gray-400/50`}
+              >
+                🔄 새롭고 어려운 퀴즈 만들기
+              </button>
+              <button
+                onClick={handleSubmitQuiz}
+                className={`${buttonStyle} bg-green-600 text-white flex-1 hover:bg-green-700 shadow-green-400/50`}
+              >
+                🌟 정답 확인하기!
+              </button>
+            </div>
+
+            {/* 퀴즈 결과 표시 */}
+            {quizResult && (
+              <div className={`mt-4 p-4 rounded-lg shadow-md ${quizResult.correct ? 'bg-green-100 border-l-4 border-green-600' : 'bg-red-100 border-l-4 border-red-600'}`}>
+                <p className="text-lg sm:text-xl font-bold text-gray-800 mb-3">
+                  {quizResult.message}
+                </p>
+                {!quizResult.correct && (
+                  <div className="mt-3">
+                    <p className="text-base font-semibold text-red-700 mb-2">
+                      ⭐ 올바른 정답 순서:
+                    </p>
+                    {/* 정답 순서를 표시 (실제 정렬된 객체를 사용) */}
+                    <div className="space-y-1">
+                      {quizResult.correctOrder.map((item, i) => (
+                        <CallNumberDisplay key={i} item={item} index={i} isCorrect={true} isFeedback={true} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+          </section>
+        )}
+      </main>
+    </div>
+  );
+};
+
+export default App;
