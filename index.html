@@ -10,9 +10,10 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600;800&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Noto Sans KR', sans-serif; background-color: #fdf2f8; }
+        body { font-family: 'Noto Sans KR', sans-serif; background-color: #fff1f2; }
         .btn-press:active { transform: scale(0.95); }
         .tab-btn { transition: all 0.2s; }
+        .dragging { opacity: 0.5; border: 2px dashed #f43f5e; }
     </style>
 </head>
 <body>
@@ -27,44 +28,44 @@
 
         const KDC_RULES = [
             { 
-                title: "1단계: 주제 번호 (분류 기호) - 십진법 순서!", 
+                title: "1단계: 주제 번호 (분류 기호) - 십진법!", 
                 color: "text-blue-600",
-                explanation: "책의 주제를 나타내는 숫자입니다. **숫자가 작을수록** 먼저 꽂혀야 합니다. 특히, 소수점 이하의 숫자는 일반적인 십진법 순서(숫자 크기)대로 비교해야 합니다.",
+                explanation: "숫자가 작을수록 먼저입니다. 소수점은 자릿수별로 비교하세요.",
                 examples: [
-                    { title: "530.5 vs 530.49", note: "소수점 아래 '49'가 '50'보다 작으므로 530.49가 먼저 옵니다." },
-                    { title: "813.1 vs 813.01", note: "0.01이 0.1보다 작으므로 813.01이 먼저 옵니다." }
+                    { title: "530.5 vs 530.49", note: "49가 50보다 작아서 530.49가 먼저!" },
+                    { title: "800 vs 800.01", note: "800이 가장 먼저, 그 뒤에 소수점." }
                 ]
             },
             { 
-                title: "2단계: 저자 번호 (도서 기호) - 한글, 숫자, 저작 기호 순서!", 
+                title: "2단계: 저자 기호 - 한글 > 숫자 > 기호", 
                 color: "text-purple-600",
-                explanation: "배열 순서: 1) **저자명 한글** (가나다 순) → 2) **저자명 뒤 숫자** (작은 수 우선) → 3) **저작 기호** (책 제목의 첫 글자 기호, 가나다 순).",
+                explanation: "한글(가나다) → 숫자(작은수) 순서입니다. **받침 없는 글자**가 받침 있는 글자보다 먼저입니다!",
                 examples: [
-                    { title: "가294 vs 각294", note: "무받침 '가'가 '각'(ㄱ 받침)보다 항상 먼저 옵니다." },
-                    { title: "동6가 vs 동61ㄱ", note: "숫자 '6'이 '61'보다 작으므로 동6가(6)가 먼저 옵니다." }
+                    { title: "가 vs 각", note: "받침 없는 '가'가 먼저!" },
+                    { title: "사 vs 싸", note: "'ㅅ'이 'ㅆ'보다 먼저!" },
+                    { title: "김2 vs 김10", note: "숫자 2가 10보다 작으므로 김2가 먼저!" }
                 ]
             },
             { 
-                title: "3단계: 권차 및 복본 기호 - 시리즈가 먼저!", 
+                title: "3단계: 부차적 기호 - v가 c보다 먼저!", 
                 color: "text-red-600",
-                explanation: "1) **시리즈(v.)**가 **복본(c.)**보다 먼저 오며, 2) 그 다음은 **숫자(1, 2, 3...)** 순서대로 정렬합니다.",
+                explanation: "권차(v) > 복본(c) 순서입니다.",
                 examples: [
-                    { title: "v.1 vs v.2", note: "1권이 2권보다 먼저 옵니다." },
-                    { title: "v.1 vs c.1", note: "권차(v.)가 복본(c.)보다 먼저 오도록 배열합니다." }
+                    { title: "v.1 vs v.2", note: "1권이 먼저!" },
+                    { title: "v.1 vs c.1", note: "권차(v)가 복본(c)보다 먼저!" }
                 ]
             }
         ];
 
-        // --- 데이터: 고난이도 퀴즈 ---
+        // --- 데이터: 초고난도 퀴즈 ---
         const QUIZ_CALL_NUMBERS = [
-            [{class:"813.5",author:"가300",vol:""}, {class:"813.5",author:"간300",vol:""}, {class:"813.51",author:"갈300",vol:""}],
-            [{class:"500.1",author:"나20",vol:"v.1"}, {class:"500.1",author:"나20",vol:"c.1"}, {class:"500.01",author:"나20",vol:"v.1"}],
-            [{class:"630.01",author:"최100",vol:""}, {class:"630.001",author:"최099",vol:""}, {class:"630.01",author:"최099",vol:""}],
-            [{class:"100",author:"배100",vol:""}, {class:"100",author:"벼050",vol:""}, {class:"100",author:"배050",vol:""}],
-            [{class:"911.3",author:"달20",vol:""}, {class:"911.3",author:"다10",vol:""}, {class:"911.3",author:"단10",vol:""}],
-            [{class:"700.5",author:"장20",vol:"ㄱ"}, {class:"700.4",author:"장20",vol:""}, {class:"700.5",author:"장20",vol:""}],
-            [{class:"811",author:"가30",vol:""}, {class:"811",author:"갸30",vol:""}, {class:"811",author:"거30",vol:""}],
-            [{class:"800",author:"왜20",vol:""}, {class:"800",author:"월20",vol:""}, {class:"800",author:"와20",vol:""}]
+            [{class:"813.6",author:"가30",vol:""}, {class:"813.6",author:"간30",vol:""}, {class:"813.6",author:"각30",vol:""}], 
+            [{class:"800",author:"싸20",vol:""}, {class:"800",author:"사20",vol:""}, {class:"800",author:"삭20",vol:""}],
+            [{class:"811",author:"위10",vol:""}, {class:"811",author:"왜10",vol:""}, {class:"811",author:"외10",vol:""}],
+            [{class:"900",author:"이100",vol:""}, {class:"900",author:"이2",vol:""}, {class:"900",author:"이20",vol:""}],
+            [{class:"500.5",author:"김1",vol:""}, {class:"500.05",author:"김1",vol:""}, {class:"500.1",author:"김1",vol:""}],
+            [{class:"813.6",author:"박10",vol:"c.1"}, {class:"813.6",author:"박10",vol:"v.1"}, {class:"813.59",author:"박10",vol:"v.1"}],
+            [{class:"100",author:"예1",vol:""}, {class:"100",author:"에1",vol:""}, {class:"100",author:"와1",vol:""}]
         ];
 
         // --- 로직: 정렬 ---
@@ -73,9 +74,7 @@
             let authorKey = ['', 0, ''];
             if (item.author) {
                 const match = item.author.match(/^([ㄱ-ㅎㅏ-ㅣ가-힣]+)?(\d+)?(.*)$/);
-                if (match) {
-                    authorKey = [match[1] || '', parseInt(match[2]) || 0, match[3] || ''];
-                }
+                if (match) authorKey = [match[1] || '', parseInt(match[2]) || 0, match[3] || ''];
             }
             let volKey = [0, 0];
             if (item.vol) {
@@ -101,14 +100,13 @@
             const keyA = getSortKey(itemA);
             const keyB = getSortKey(itemB);
             const types = ['주제 번호', '저자명 한글', '저자 번호 숫자', '저작 기호', '권/복본 종류', '권/복본 번호'];
-            
             for (let i = 0; i < keyA.length; i++) {
                 if (keyA[i] !== keyB[i]) {
                     const winner = keyA[i] < keyB[i] ? 'A' : 'B';
                     return `(${types[i]} 비교: ${winner}가 먼저)`;
                 }
             }
-            return "(모든 항목이 같거나 순서 구분이 어렵습니다)";
+            return "(순서 동일)";
         };
 
         // --- 컴포넌트: 앱 메인 ---
@@ -123,7 +121,6 @@
 
             const generateNewQuiz = useCallback(() => {
                 const idx = Math.floor(Math.random() * QUIZ_CALL_NUMBERS.length);
-                // 퀴즈 데이터 복사 및 ID 생성
                 setQuiz(QUIZ_CALL_NUMBERS[idx].map(item => ({ ...item, id: Math.random() })));
                 setQuizRes(null);
             }, []);
@@ -131,15 +128,19 @@
             useEffect(() => { generateNewQuiz(); }, [generateNewQuiz]);
 
             const handleCompare = () => {
-                if ((!inputA.class && !inputA.author && !inputA.vol) || (!inputB.class && !inputB.author && !inputB.vol)) {
-                    setResult({ msg: '⚠️ 정보를 더 입력해주세요!', reason: '' });
+                if ((!inputA.class && !inputA.author) || (!inputB.class && !inputB.author)) {
+                    setResult({ msg: '⚠️ 정보를 입력해주세요!', reason: '' });
                     return;
                 }
                 const r = compareCallNumbers(inputA, inputB);
                 const reason = getComparisonReason(inputA, inputB);
-                if (r < 0) setResult({ msg: '책 A → 책 B 순서로 꽂아주세요.', reason });
-                else if (r > 0) setResult({ msg: '책 B → 책 A 순서로 꽂아주세요.', reason });
-                else setResult({ msg: '순서 동일', reason });
+                
+                let message = '';
+                if (r < 0) message = 'A -> B 순서';
+                else if (r > 0) message = 'B -> A 순서';
+                else message = '순서 동일';
+                
+                setResult({ msg: message, reason });
             };
 
             const clearInputs = () => {
@@ -163,83 +164,81 @@
             const handleSubmitQuiz = () => {
                 const sorted = [...quiz].sort(compareCallNumbers);
                 const isCorrect = quiz.every((item, i) => item.id === sorted[i].id);
-                setQuizRes(isCorrect ? { ok: true, msg: '🎉 정답입니다! 완벽해요!' } : { ok: false, msg: '❌ 다시 생각해보세요.', ans: sorted });
+                setQuizRes(isCorrect ? { ok: true, msg: '🎉 정답입니다! 실력이 대단해요!' } : { ok: false, msg: '❌ 땡! 다시 도전해보세요.', ans: sorted });
             };
 
-            // --- UI 렌더링 ---
-            const inputCls = "w-full p-3 text-lg font-medium border border-gray-300 rounded-lg focus:ring-2 focus:ring-fuchsia-400 focus:outline-none text-center placeholder-gray-400";
-            const btnCls = "flex-1 py-3 rounded-xl font-bold shadow-sm btn-press transition";
+            const inputCls = "w-full p-3 text-lg font-medium border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-rose-400 focus:border-rose-400 transition text-center placeholder-gray-400";
+            const btnCls = "flex-1 py-3 rounded-xl font-bold shadow-sm btn-press transition duration-200";
 
             return (
-                <div className="max-w-md mx-auto p-4 min-h-screen flex flex-col">
-                    <header className="text-center mb-6">
-                        <h1 className="text-3xl font-extrabold text-pink-600 mb-1 drop-shadow-sm">📚 도서관 마스터 ✨</h1>
-                        <p className="text-gray-500 text-sm">쉽고 재미있는 청구기호 정리!</p>
+                <div className="max-w-md mx-auto p-4 min-h-screen flex flex-col bg-white sm:rounded-2xl sm:shadow-2xl sm:my-8">
+                    <header className="text-center mb-6 mt-2">
+                        <h1 className="text-3xl font-extrabold text-rose-500 mb-1 drop-shadow-sm">📚 도서관 마스터 🔥</h1>
+                        <p className="text-gray-500 text-sm font-medium">청구기호 정리, 이제 어렵지 않아요!</p>
                     </header>
 
-                    <nav className="flex gap-2 mb-6">
-                        <button onClick={() => setActiveTab('compare')} className={`${btnCls} ${activeTab === 'compare' ? 'bg-pink-500 text-white' : 'bg-white text-gray-600'}`}>🔍 비교</button>
-                        <button onClick={() => setActiveTab('rules')} className={`${btnCls} ${activeTab === 'rules' ? 'bg-purple-500 text-white' : 'bg-white text-gray-600'}`}>💡 규칙</button>
-                        <button onClick={() => setActiveTab('quiz')} className={`${btnCls} ${activeTab === 'quiz' ? 'bg-indigo-500 text-white' : 'bg-white text-gray-600'}`}>🏆 퀴즈</button>
+                    <nav className="flex gap-2 mb-6 bg-gray-100 p-1 rounded-2xl">
+                        <button onClick={() => setActiveTab('compare')} className={`${btnCls} ${activeTab === 'compare' ? 'bg-white text-rose-500 shadow-md' : 'text-gray-500 hover:bg-gray-200'}`}>🔍 비교</button>
+                        <button onClick={() => setActiveTab('rules')} className={`${btnCls} ${activeTab === 'rules' ? 'bg-white text-purple-600 shadow-md' : 'text-gray-500 hover:bg-gray-200'}`}>💡 규칙</button>
+                        <button onClick={() => setActiveTab('quiz')} className={`${btnCls} ${activeTab === 'quiz' ? 'bg-white text-indigo-600 shadow-md' : 'text-gray-500 hover:bg-gray-200'}`}>🏆 퀴즈</button>
                     </nav>
 
-                    <main className="bg-white rounded-2xl shadow-lg p-5 flex-1">
+                    <main className="flex-1">
                         {activeTab === 'compare' && (
-                            <section>
-                                <h2 className="text-xl font-bold text-gray-800 border-b-2 border-pink-200 pb-2 mb-4">두 책 비교하기 🤔</h2>
-                                <div className="grid grid-cols-2 gap-3 mb-4">
-                                    <div className="p-3 bg-pink-50 rounded-xl border-2 border-pink-200">
-                                        <div className="font-bold text-pink-600 mb-2 text-center">📘 책 A</div>
+                            <section className="animate-fade-in">
+                                <div className="grid grid-cols-2 gap-3 mb-6">
+                                    <div className="p-4 bg-rose-50 rounded-2xl border-2 border-rose-100">
+                                        <div className="font-extrabold text-rose-500 mb-3 text-center text-lg">📘 책 A</div>
                                         <input className={`${inputCls} mb-2`} placeholder="주제 (813.6)" value={inputA.class} onChange={e => setInputA({ ...inputA, class: e.target.value })} />
                                         <input className={`${inputCls} mb-2`} placeholder="저자 (김294)" value={inputA.author} onChange={e => setInputA({ ...inputA, author: e.target.value })} />
                                         <input className={inputCls} placeholder="권차 (v.1)" value={inputA.vol} onChange={e => setInputA({ ...inputA, vol: e.target.value })} />
                                     </div>
-                                    <div className="p-3 bg-purple-50 rounded-xl border-2 border-purple-200">
-                                        <div className="font-bold text-purple-600 mb-2 text-center">📙 책 B</div>
+                                    <div className="p-4 bg-indigo-50 rounded-2xl border-2 border-indigo-100">
+                                        <div className="font-extrabold text-indigo-500 mb-3 text-center text-lg">📙 책 B</div>
                                         <input className={`${inputCls} mb-2`} placeholder="주제 (813.5)" value={inputB.class} onChange={e => setInputB({ ...inputB, class: e.target.value })} />
                                         <input className={`${inputCls} mb-2`} placeholder="저자 (나15)" value={inputB.author} onChange={e => setInputB({ ...inputB, author: e.target.value })} />
                                         <input className={inputCls} placeholder="권차 (v.2)" value={inputB.vol} onChange={e => setInputB({ ...inputB, vol: e.target.value })} />
                                     </div>
                                 </div>
-                                <div className="flex gap-2 mb-4">
-                                    <button onClick={handleCompare} className="flex-1 py-4 bg-pink-500 text-white rounded-xl font-bold text-lg shadow-md btn-press hover:bg-pink-600">✅ 순서 확인!</button>
-                                    <button onClick={clearInputs} className="px-4 py-4 bg-gray-200 text-gray-600 rounded-xl font-bold shadow-md btn-press">🧹</button>
+                                <div className="flex gap-3 mb-6">
+                                    <button onClick={handleCompare} className="flex-[3] py-4 bg-rose-500 text-white rounded-xl font-bold text-xl shadow-lg btn-press hover:bg-rose-600">✅ 순서 확인!</button>
+                                    <button onClick={clearInputs} className="flex-1 py-4 bg-gray-200 text-gray-600 rounded-xl font-bold text-xl shadow-md btn-press hover:bg-gray-300">🧹</button>
                                 </div>
                                 {result.msg && (
-                                    <div className="p-4 bg-yellow-100 rounded-xl text-center border-2 border-yellow-300">
-                                        <p className="text-2xl font-black text-gray-800 mb-1">{result.msg}</p>
-                                        {result.reason && <p className="text-sm text-gray-600 font-medium">{result.reason}</p>}
+                                    <div className="p-5 bg-yellow-50 rounded-2xl text-center border-2 border-yellow-400 shadow-sm">
+                                        <p className="text-3xl font-black text-gray-800 mb-2">{result.msg}</p>
+                                        {result.reason && <p className="text-sm text-gray-600 font-bold bg-white inline-block px-3 py-1 rounded-full border border-gray-200">{result.reason}</p>}
                                     </div>
                                 )}
                             </section>
                         )}
 
                         {activeTab === 'rules' && (
-                            <section className="space-y-6">
-                                <div className="bg-blue-50 p-4 rounded-xl border-l-4 border-blue-500">
-                                    <h3 className="font-bold text-lg text-blue-700 mb-2">🏷️ 청구기호 구조</h3>
-                                    <p className="text-gray-700 font-medium">1️⃣ <span className="text-red-600">813.6</span> (주제/분류) : 숫자 크기<br/>2️⃣ <span className="text-purple-600">김294</span> (저자/도서) : 한글/숫자</p>
+                            <section className="space-y-5 animate-fade-in">
+                                <div className="bg-blue-50 p-5 rounded-2xl border-l-8 border-blue-500 shadow-sm">
+                                    <h3 className="font-extrabold text-xl text-blue-700 mb-2">🏷️ 청구기호 구조</h3>
+                                    <p className="text-gray-700 font-medium text-lg">1️⃣ <span className="text-red-600">813.6</span> (주제) : 숫자 크기<br/>2️⃣ <span className="text-purple-600">김294</span> (저자) : 한글/숫자</p>
                                 </div>
-                                <div className="bg-green-50 p-4 rounded-xl border-l-4 border-green-500">
-                                    <h3 className="font-bold text-lg text-green-700 mb-2">🔤 한글 순서 (가나다)</h3>
-                                    <div className="flex flex-wrap gap-1 mb-2">
-                                        {KOREAN_CONSONANTS.map((c, i) => <span key={i} className="bg-white px-2 py-1 rounded shadow-sm text-xs font-bold text-gray-700">{c}</span>)}
+                                <div className="bg-green-50 p-5 rounded-2xl border-l-8 border-green-500 shadow-sm">
+                                    <h3 className="font-extrabold text-xl text-green-700 mb-3">🔤 한글 순서 (가나다)</h3>
+                                    <div className="flex flex-wrap gap-1 mb-3">
+                                        {KOREAN_CONSONANTS.map((c, i) => <span key={i} className="bg-white px-2 py-1 rounded-lg shadow-sm text-sm font-bold text-gray-700 border border-green-100">{c}</span>)}
                                     </div>
                                     <div className="flex flex-wrap gap-1">
-                                        {KOREAN_VOWELS.map((v, i) => <span key={i} className="bg-white px-2 py-1 rounded shadow-sm text-xs font-bold text-gray-700">{v}</span>)}
+                                        {KOREAN_VOWELS.map((v, i) => <span key={i} className="bg-white px-2 py-1 rounded-lg shadow-sm text-sm font-bold text-gray-700 border border-green-100">{v}</span>)}
                                     </div>
-                                    <p className="mt-2 text-sm text-gray-600 font-bold">* 받침 없는 글자가 먼저!</p>
+                                    <p className="mt-3 text-sm text-green-800 font-bold bg-green-100 inline-block px-2 rounded">📌 받침 없는 글자가 먼저!</p>
                                 </div>
-                                <div className="space-y-3">
+                                <div className="space-y-4">
                                     {KDC_RULES.map((rule, i) => (
-                                        <div key={i} className="border rounded-xl p-3 shadow-sm bg-white">
-                                            <h3 className={`font-bold ${rule.color} text-lg mb-1`}>{rule.title}</h3>
-                                            <p className="text-sm text-gray-700 mb-2">{rule.explanation}</p>
-                                            <div className="space-y-1">
+                                        <div key={i} className="border-2 border-gray-100 rounded-2xl p-4 shadow-sm bg-white">
+                                            <h3 className={`font-extrabold ${rule.color} text-lg mb-2`}>{rule.title}</h3>
+                                            <p className="text-gray-700 mb-3 font-medium">{rule.explanation}</p>
+                                            <div className="space-y-2">
                                                 {rule.examples.map((ex, j) => (
-                                                    <div key={j} className="bg-gray-50 p-2 rounded text-sm border border-gray-200">
-                                                        <span className="font-bold text-gray-800 mr-1">{ex.title}</span>
-                                                        <span className="text-gray-500 text-xs">({ex.note})</span>
+                                                    <div key={j} className="bg-gray-50 p-3 rounded-xl text-sm border border-gray-200 flex justify-between items-center">
+                                                        <span className="font-bold text-gray-800">{ex.title}</span>
+                                                        <span className="text-gray-500 text-xs bg-white px-2 py-1 rounded border">{ex.note}</span>
                                                     </div>
                                                 ))}
                                             </div>
@@ -250,34 +249,39 @@
                         )}
 
                         {activeTab === 'quiz' && (
-                            <section className="space-y-4">
-                                <h2 className="text-xl font-bold text-gray-800 text-center">순서대로 나열해보세요! 🧩</h2>
-                                <div className="space-y-2">
+                            <section className="space-y-4 animate-fade-in">
+                                <div className="bg-indigo-50 p-4 rounded-xl text-center mb-4 border border-indigo-100">
+                                    <h2 className="text-xl font-extrabold text-indigo-700">🔥 실력 검증 퀴즈 🔥</h2>
+                                    <p className="text-indigo-400 text-sm">드래그해서 순서를 맞춰보세요!</p>
+                                </div>
+                                <div className="space-y-3">
                                     {quiz.map((item, i) => (
                                         <div key={item.id} draggable onDragStart={(e) => onDragStart(e, i)} onDragOver={(e) => onDragOver(e, i)}
-                                            className="flex items-center p-3 bg-white border-2 border-indigo-100 rounded-xl shadow-sm cursor-move active:bg-indigo-50">
-                                            <div className="w-8 h-8 bg-indigo-500 text-white rounded-full flex items-center justify-center font-bold mr-3 shrink-0 shadow-sm">{i + 1}</div>
-                                            <div className="font-mono text-lg leading-tight flex-1">
-                                                <span className="text-blue-600 font-bold mr-1">{item.class}</span>
-                                                <span className="text-gray-800 mr-1">{item.author}</span>
-                                                <span className="text-red-500 text-sm">{item.vol}</span>
+                                            className="flex items-center p-4 bg-white border-2 border-gray-100 rounded-2xl shadow-sm cursor-move active:bg-indigo-50 transition hover:border-indigo-300">
+                                            <div className="w-10 h-10 bg-indigo-500 text-white rounded-full flex items-center justify-center font-bold mr-4 shrink-0 shadow-md text-lg">{i + 1}</div>
+                                            <div className="font-mono text-xl leading-tight flex-1 text-gray-700">
+                                                <span className="font-bold text-rose-500 mr-2">{item.class}</span>
+                                                <span className="font-bold text-gray-800 mr-2">{item.author}</span>
+                                                <span className="text-gray-400 text-base">{item.vol}</span>
                                             </div>
+                                            <div className="text-gray-300">☰</div>
                                         </div>
                                     ))}
                                 </div>
-                                <div className="flex gap-2 mt-4">
-                                    <button onClick={generateNewQuiz} className="flex-1 py-3 bg-gray-200 rounded-xl font-bold text-gray-600 btn-press hover:bg-gray-300">🔄 새 문제</button>
-                                    <button onClick={handleSubmitQuiz} className="flex-1 py-3 bg-indigo-500 text-white rounded-xl font-bold shadow-md btn-press hover:bg-indigo-600">🌟 정답 확인!</button>
+                                <div className="flex gap-3 mt-6">
+                                    <button onClick={generateNewQuiz} className="flex-1 py-4 bg-gray-200 rounded-xl font-bold text-gray-600 btn-press hover:bg-gray-300 shadow-md">🔄 새 문제</button>
+                                    <button onClick={handleSubmitQuiz} className="flex-[2] py-4 bg-indigo-600 text-white rounded-xl font-bold shadow-lg btn-press hover:bg-indigo-700 text-lg">🌟 정답 확인!</button>
                                 </div>
                                 {quizRes && (
-                                    <div className={`p-4 rounded-xl text-center border-2 mt-4 ${quizRes.ok ? 'bg-green-100 border-green-400' : 'bg-red-100 border-red-400'}`}>
-                                        <p className={`text-xl font-bold mb-2 ${quizRes.ok ? 'text-green-700' : 'text-red-700'}`}>{quizRes.msg}</p>
+                                    <div className={`p-5 rounded-2xl text-center border-4 mt-6 shadow-lg ${quizRes.ok ? 'bg-green-50 border-green-400' : 'bg-red-50 border-red-400'}`}>
+                                        <p className={`text-2xl font-black mb-3 ${quizRes.ok ? 'text-green-600' : 'text-red-600'}`}>{quizRes.msg}</p>
                                         {!quizRes.ok && (
-                                            <div className="text-left text-sm bg-white p-3 rounded-lg mt-2 border">
-                                                <div className="font-bold text-red-500 mb-1">정답 순서:</div>
+                                            <div className="text-left text-base bg-white p-4 rounded-xl mt-2 border-2 border-gray-100">
+                                                <div className="font-extrabold text-red-500 mb-2 border-b pb-2">👇 정답 순서</div>
                                                 {quizRes.ans.map((it, idx) => (
-                                                    <div key={idx} className="font-mono border-b last:border-0 py-1">
-                                                        {idx + 1}. {it.class} / {it.author} {it.vol}
+                                                    <div key={idx} className="font-mono py-1 flex items-center">
+                                                        <span className="w-6 h-6 bg-gray-200 rounded-full flex items-center justify-center text-xs font-bold mr-2 text-gray-600">{idx + 1}</span>
+                                                        {it.class} / {it.author} {it.vol}
                                                     </div>
                                                 ))}
                                             </div>
